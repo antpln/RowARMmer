@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "utils.h": "c",
+        "fcntl.h": "c",
+        "assert.h": "c"
+    }
+}
