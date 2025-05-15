@@ -2,6 +2,14 @@
     "files.associations": {
         "utils.h": "c",
         "fcntl.h": "c",
-        "assert.h": "c"
+        "assert.h": "c",
+        "vector": "cpp",
+        "hammer.h": "c",
+        "memory.h": "c",
+        "main.C": "cpp",
+        "compare": "c",
+        "cstdint": "c",
+        "format": "c",
+        "time.h": "c"
     }
 }
