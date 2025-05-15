@@ -81,13 +81,14 @@ uint64_t get_phys_addr(uint64_t v_addr)
     uint64_t pfn;
     int fd = open("/proc/self/pagemap", O_RDONLY);
     if (fd < 0) {
+        printf("Error: Failed to open /proc/self/pagemap. Are you running as root ?\n");
         perror("Failed to open /proc/self/pagemap");
         exit(EXIT_FAILURE);
     }
     int bytes_read = pread(fd, &entry, sizeof(entry), offset);
     close(fd);
     if (bytes_read != 8) {
-        fprintf(stderr, "Error: Failed to read 8 bytes from /proc/self/pagemap\n");
+        fprintf(stderr, "Error: Failed to read 8 bytes from /proc/self/pagemap. Are you running as root ?\n");
         exit(EXIT_FAILURE);
     }
     if (!(entry & (1ULL << 63))) {

@@ -383,6 +383,8 @@ uint64_t *buffer_init(size_t size, buffer_type type, pattern_func pattern)
     uint64_t *buffer = mmap(NULL, size, PROT_READ | PROT_WRITE, flags, -1, 0);
     if (buffer == MAP_FAILED)
     {
+        if(type == HUGEPAGE_2MB || type == HUGEPAGE_1GB)
+            printf("Failed to allocate huge page. Run 'sudo make prepare' or 'sudo make huge2m'.\n");
         perror("mmap");
         return NULL;
     }

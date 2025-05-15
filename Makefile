@@ -60,10 +60,16 @@ huge2m:
 
 ### enable PMU helper --------------------------------------------------------
 enable_pmu:
-	cd enable_arm_pmu && make && sudo bash load-module || echo "PMU module already loaded" && cd ..
+	for X in $$(seq 0 3); do \
+  		for Y in $$(seq 0 1); do \
+    		echo 1 | sudo tee /sys/devices/system/cpu/cpu$$X/cpuidle/state$$Y/disable > /dev/null; \
+  		done; \
+	done; \
+	cd enable_arm_pmu && make && (sudo bash load-module || echo "PMU module already loaded") && cd ..
 
 ### prepare -------------------------------------------------------------------
 prepare:
+	mkdir logs || echo "logs directory already exists"
 	sudo make huge2m
 	sudo make enable_pmu
 
