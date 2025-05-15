@@ -60,7 +60,7 @@ huge2m:
 
 ### enable PMU helper --------------------------------------------------------
 enable_pmu:
-	sudo bash /enable_arm_pmu/load-module
+	sudo bash enable_arm_pmu/load-module
 
 ### clean ---------------------------------------------------------------------
 clean:
