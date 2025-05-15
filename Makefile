@@ -36,7 +36,7 @@ CFLAGS    := -std=c11 -O2 \
 
 LDFLAGS   :=
 
-.PHONY: all clean run huge2m
+.PHONY: all clean run huge2m enable_pmu prepare
 
 ### build rules ----------------------------------------------------------------
 all: $(TARGET)
@@ -60,8 +60,14 @@ huge2m:
 
 ### enable PMU helper --------------------------------------------------------
 enable_pmu:
-	sudo bash enable_arm_pmu/load-module
+	cd enable_arm_pmu && make && sudo bash load-module || echo "PMU module already loaded" && cd ..
+
+### prepare -------------------------------------------------------------------
+prepare:
+	sudo make huge2m
+	sudo make enable_pmu
 
 ### clean ---------------------------------------------------------------------
 clean:
 	rm -f $(OBJS) $(TARGET)
+
