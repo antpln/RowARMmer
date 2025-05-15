@@ -55,9 +55,12 @@ run: $(TARGET)
 ### hugetlbfs helper ----------------------------------------------------------
 NR ?= 1024
 MOUNT_DIR ?= /mnt/huge_2M
-
 huge2m:
 	sudo echo $(NR) > /proc/sys/vm/nr_hugepages
+
+### enable PMU helper --------------------------------------------------------
+enable_pmu:
+	sudo bash /enable_arm_pmu/load-module
 
 ### clean ---------------------------------------------------------------------
 clean:
