@@ -1,0 +1,3 @@
+[submodule "enable_arm_pmu"]
+	path = enable_arm_pmu
+	url = https://github.com/thoughtpolice/enable_arm_pmu.git
