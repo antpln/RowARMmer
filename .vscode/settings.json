@@ -10,6 +10,22 @@
         "compare": "c",
         "cstdint": "c",
         "format": "c",
-        "time.h": "c"
+        "time.h": "c",
+        "tests.h": "c",
+        "stdio.h": "c",
+        "pteditor.h": "c",
+        "ptedit_header.h": "c",
+        "iostream": "c",
+        "charconv": "c",
+        "chrono": "c",
+        "optional": "c",
+        "ranges": "c",
+        "ratio": "c",
+        "system_error": "c",
+        "array": "c",
+        "functional": "c",
+        "tuple": "c",
+        "type_traits": "c",
+        "utility": "c"
     }
 }

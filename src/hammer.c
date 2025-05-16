@@ -39,7 +39,6 @@ uint64_t hammer_single(addr_tuple addr, int iter, bool timing)
 
     for (int i = 0; i < iter; i++)
     {
-        __asm__ volatile("DC CIVAC, %0" : : "r"(v_addr));
         __asm__ volatile("LDR %0, [%1]" : "=r"(val) : "r"(v_addr));
     }
 
@@ -94,8 +93,6 @@ uint64_t hammer_double(addr_tuple addr_1, addr_tuple addr_2, int iter, bool timi
 
     for (int i = 0; i < iter; i++)
     {
-        __asm__ volatile("DC CIVAC, %0" : : "r"(v_addr_1));
-        __asm__ volatile("DC CIVAC, %0" : : "r"(v_addr_2));
         __asm__ volatile("LDR %0, [%1]" : "=r"(val1) : "r"(v_addr_1));
         __asm__ volatile("LDR %0, [%1]" : "=r"(val2) : "r"(v_addr_2));
     }
@@ -375,7 +372,7 @@ bitflip *focused_detect_bitflips(uint64_t *buffer, size_t size, pattern_func pat
 uint64_t *buffer_init(size_t size, buffer_type type, pattern_func pattern)
 {
     size_t count = size / sizeof(uint64_t);
-    uint64_t flags = MAP_PRIVATE | MAP_ANONYMOUS;
+    uint64_t flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE;
 
     if (type == HUGEPAGE_2MB)
         flags |= MAP_HUGETLB | MAP_HUGE_2MB;
@@ -388,11 +385,19 @@ uint64_t *buffer_init(size_t size, buffer_type type, pattern_func pattern)
         perror("mmap");
         return NULL;
     }
+    printf("Allocated %zu bytes at %p\n", size, buffer);
 
     for (size_t i = 0; i < count; ++i)
     {
         uint64_t byte_addr = (uint64_t)buffer + i * sizeof(uint64_t);
-        buffer[i] = (uint64_t)pattern(byte_addr);
+        if(pattern == NULL)
+        {
+            buffer[i] = 0;
+            continue;
+        }
+        else {
+            buffer[i] = (uint64_t)pattern(byte_addr);
+        }
     }
     return buffer;
 }
@@ -448,8 +453,9 @@ void buffer_init_check(uint64_t *buffer, size_t size, pattern_func pattern)
  * @iter: The number of iterations to perform.
  * @hammer_iter: The number of hammering iterations per test.
  * @output_file: The file to write test results to, or NULL for no output.
+ * @uncachable: Boolean flag to make the buffer uncachable.
  */
-void bitflip_test(size_t buffer_size, buffer_type b_type, pattern_func pattern, hammer_pattern hammer_pattern, bool timing, int iter, int hammer_iter, char *output_file)
+void bitflip_test(size_t buffer_size, buffer_type b_type, pattern_func pattern, hammer_pattern hammer_pattern, bool timing, int iter, int hammer_iter, char *output_file, bool uncachable)
 {
     FILE *file = NULL;
     if (output_file != NULL)
@@ -469,6 +475,11 @@ void bitflip_test(size_t buffer_size, buffer_type b_type, pattern_func pattern, 
     uint64_t *buffer = buffer_init(buffer_size, b_type, pattern);
     buffer_init_check(buffer, buffer_size, pattern);
 
+    if (uncachable)
+    {
+        make_uncacheable_multi(buffer, buffer_size, b_type == HUGEPAGE_2MB ? MB(2) : KB(4));
+    }
+
     size_t pmap_len = 0;
     pfn_va_t *pmap = build_pfn_map(buffer, buffer_size, &pmap_len);
     if (pmap == NULL || pmap_len == 0)
@@ -480,7 +491,7 @@ void bitflip_test(size_t buffer_size, buffer_type b_type, pattern_func pattern, 
     va_to_pa_test(buffer, buffer_size, pmap, pmap_len);
 
     printf("Testing hammering strategies...\n");
-    instructions_timing_test(gen_random_addr(buffer, buffer_size), 100000);
+    instructions_timing_test(gen_random_addr(buffer, buffer_size), 100000, buffer, buffer_size);
     int total_flips = 0;
     int i = 0;
     int progress = 0;

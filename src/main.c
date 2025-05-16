@@ -91,6 +91,7 @@ static void usage(const char *prog)
     puts("  -S, --seed <hex/dec>    seed for rand pattern (default epoch time)");
     puts("  -t, --timing            collect cycle counts");
     puts("  -v, --verbose           print flips to stdout as well");
+    puts("  -u, --uncachable        make memory buffer uncachable");
     puts("  -h, --help              this message\n");
 }
 
@@ -126,6 +127,7 @@ int main(int argc, char *argv[])
     bool          timing       = false;
     bool          verbose      = false;
     bool          seed_given   = false;
+    bool          uncachable   = false;
 
     static struct option long_opts[] = {
         {"size",   required_argument, 0, 's'},
@@ -137,12 +139,13 @@ int main(int argc, char *argv[])
         {"seed",           required_argument, 0, 'S'},
         {"timing", no_argument,       0, 't'},
         {"verbose",no_argument,       0, 'v'},
+        {"uncachable", no_argument,   0, 'u'},
         {"help",   no_argument,       0, 'h'},
         {0,0,0,0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "s:i:n:H:B:P:S:tvh", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "s:i:n:H:B:P:S:tvu", long_opts, NULL)) != -1) {
         switch (opt) {
             case 's': size_mb     = strtoul(optarg, NULL, 0); break;
             case 'i': iter        = atoi(optarg);            break;
@@ -153,6 +156,7 @@ int main(int argc, char *argv[])
             case 'S': g_pattern_seed = strtoull(optarg, NULL, 0); seed_given = true; break;
             case 't': timing      = true;                    break;
             case 'v': verbose     = true;                    VERBOSE = 1; break;
+            case 'u': uncachable  = true;                    break; // Handle new option
             default : usage(argv[0]); return opt=='h'?0:1;
         }
     }
@@ -166,8 +170,8 @@ int main(int argc, char *argv[])
         struct tm tm; localtime_r(&now, &tm);
         strftime(out_name, sizeof(out_name), "logs/flips_%Y%m%d_%H%M%S.txt", &tm);
     }
-    printf("Starting test: size=%zu MB, iter=%d, hammer=%d, pattern=%s, seed=0x%llx, HP=%d, file=%s\n",
-           size_mb, iter, hammer_iter, pattern_name, (unsigned long long)g_pattern_seed, btype, out_name);
+    printf("Starting test: size=%zu MB, iter=%d, hammer=%d, pattern=%s, seed=0x%llx, HP=%d, uncachable=%d, file=%s\n",
+           size_mb, iter, hammer_iter, pattern_name, (unsigned long long)g_pattern_seed, btype, uncachable, out_name);
     /* ---- write header to file ---- */
     FILE *hdr = fopen(out_name, "w");
     if (hdr) {
@@ -182,7 +186,7 @@ int main(int argc, char *argv[])
         printf("Starting...");
     }
 
-    bitflip_test(buf_bytes, btype, pattern, hpat, timing, iter, hammer_iter, out_name);
+    bitflip_test(buf_bytes, btype, pattern, hpat, timing, iter, hammer_iter, out_name, uncachable);
 
     puts("Done.");
     return 0;

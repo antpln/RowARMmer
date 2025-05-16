@@ -58,6 +58,7 @@ This will build the main binary: `hammer_test`
 | `-S`, `--seed <value>`  | Seed for `rand` pattern (default: current epoch time)      |
 | `-t`, `--timing`        | Collect cycle counts using PMU                             |
 | `-v`, `--verbose`       | Print bitflips to stdout                                   |
+| `-u`, `--uncachable`     | Make the memory buffer uncachable (default: disabled)         |
 | `-h`, `--help`          | Print this usage message                                   |
 
 ---

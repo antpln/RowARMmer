@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <assert.h>
+#include <ptedit_header.h>
 
 /**
  * build_pfn_map - Builds a mapping of page frame numbers (PFNs) to virtual addresses.
@@ -16,21 +17,24 @@
  */
 pfn_va_t *build_pfn_map(void *buf, size_t bytes, size_t *out_n)
 {
-    int pg = open("/proc/self/pagemap", O_RDONLY);   assert(pg >= 0);
+    int pg = open("/proc/self/pagemap", O_RDONLY);
+    assert(pg >= 0);
 
-    size_t pages = bytes >> 12;                      /* 4 KiB pages   */
-    pfn_va_t *map = calloc(pages, sizeof *map);      /* dense vector  */
+    size_t pages = bytes >> 12;                 /* 4 KiB pages   */
+    pfn_va_t *map = calloc(pages, sizeof *map); /* dense vector  */
 
-    for (size_t i = 0; i < pages; ++i) {
+    for (size_t i = 0; i < pages; ++i)
+    {
         uint64_t va = (uint64_t)buf + (i << 12);
         uint64_t entry;
-        if (pread(pg, &entry, sizeof entry, (va>>12)*8) != sizeof(entry)) {
+        if (pread(pg, &entry, sizeof entry, (va >> 12) * 8) != sizeof(entry))
+        {
             perror("Failed to read entry from pagemap");
             exit(EXIT_FAILURE);
         }
-        uint64_t pfn = entry & ((1ULL<<55)-1);
+        uint64_t pfn = entry & ((1ULL << 55) - 1);
         map[i].pfn = pfn;
-        map[i].va  = va & ~0xFFFULL;
+        map[i].va = va & ~0xFFFULL;
     }
     close(pg);
     *out_n = pages;
@@ -55,7 +59,7 @@ void *pa_to_va(uint64_t pa, pfn_va_t *map, size_t n)
         if (map[i].pfn == pfn)
             return (void *)(map[i].va + off);
 
-    return NULL;          /* PFN not found or table stale */
+    return NULL; /* PFN not found or table stale */
 }
 
 /**
@@ -64,7 +68,8 @@ void *pa_to_va(uint64_t pa, pfn_va_t *map, size_t n)
  *
  * Returns the PFN extracted from the entry.
  */
-uint64_t get_pfn(uint64_t entry) {
+uint64_t get_pfn(uint64_t entry)
+{
     return entry & ((1ULL << 55) - 1); // Bits 0–54
 }
 
@@ -80,23 +85,27 @@ uint64_t get_phys_addr(uint64_t v_addr)
     uint64_t offset = (v_addr / 4096) * sizeof(entry);
     uint64_t pfn;
     int fd = open("/proc/self/pagemap", O_RDONLY);
-    if (fd < 0) {
+    if (fd < 0)
+    {
         printf("Error: Failed to open /proc/self/pagemap. Are you running as root ?\n");
         perror("Failed to open /proc/self/pagemap");
         exit(EXIT_FAILURE);
     }
     int bytes_read = pread(fd, &entry, sizeof(entry), offset);
     close(fd);
-    if (bytes_read != 8) {
+    if (bytes_read != 8)
+    {
         fprintf(stderr, "Error: Failed to read 8 bytes from /proc/self/pagemap. Are you running as root ?\n");
         exit(EXIT_FAILURE);
     }
-    if (!(entry & (1ULL << 63))) {
+    if (!(entry & (1ULL << 63)))
+    {
         fprintf(stderr, "Error: Page is not present in memory\n");
         exit(EXIT_FAILURE);
     }
     pfn = get_pfn(entry);
-    if (pfn == 0) {
+    if (pfn == 0)
+    {
         fprintf(stderr, "Error: PFN is zero, invalid physical address\n");
         exit(EXIT_FAILURE);
     }
@@ -156,4 +165,79 @@ int hweight64(uint64_t x)
 int parity64(uint64_t x)
 {
     return hweight64(x) & 1;
+}
+size_t make_uncacheable(void *buffer_ptr)
+{
+    ptedit_init();
+    int uncachable_memory_type = ptedit_find_first_mt(PTEDIT_MT_UC);
+    ptedit_entry_t page_table_entry = ptedit_resolve(buffer_ptr, 0);
+    size_t original_page_descriptor = page_table_entry.pmd;
+    page_table_entry.pmd = ptedit_apply_mt_huge(page_table_entry.pmd, uncachable_memory_type);
+    page_table_entry.valid = PTEDIT_VALID_MASK_PMD;
+    ptedit_update(buffer_ptr, 0, &page_table_entry);
+    ptedit_cleanup();
+    return original_page_descriptor;
+}
+
+size_t make_cacheable(void *buffer_ptr, size_t original_page_descriptor)
+{
+    ptedit_init();
+    int uncachable_memory_type = ptedit_find_first_mt(PTEDIT_MT_UC);
+    ptedit_entry_t page_table_entry = ptedit_resolve(buffer_ptr, 0);
+    page_table_entry.pmd = original_page_descriptor;
+    page_table_entry.valid = PTEDIT_VALID_MASK_PMD;
+    ptedit_update(buffer_ptr, 0, &page_table_entry);
+    ptedit_cleanup();
+    return original_page_descriptor;
+}
+
+size_t* make_uncacheable_multi(void *buffer_ptr, size_t size) {
+    if (ptedit_init()) {
+        fprintf(stderr, "Failed to initialize ptedit\n");
+        return NULL;
+    }
+
+    int uc_mt = ptedit_find_first_mt(PTEDIT_MT_UC);
+    if (uc_mt == -1) {
+        fprintf(stderr, "No UC memory type available\n");
+        ptedit_cleanup();
+        return NULL;
+    }
+
+    size_t huge_page_size = 2 * 1024 * 1024;
+    size_t num_pages = size / huge_page_size;
+    size_t* original_pmds = malloc(num_pages * sizeof(size_t));
+
+    for (size_t i = 0; i < num_pages; ++i) {
+        void* cur = (char*)buffer_ptr + i * huge_page_size;
+        ptedit_entry_t entry = ptedit_resolve(cur, 0);
+        original_pmds[i] = entry.pmd;
+
+        entry.pmd = ptedit_apply_mt_huge(entry.pmd, uc_mt);
+        entry.valid = PTEDIT_VALID_MASK_PMD;
+        ptedit_update(cur, 0, &entry);
+    }
+
+    ptedit_cleanup();
+    return original_pmds;
+}
+
+void make_cacheable_multi(void *buffer_ptr, size_t size, size_t* original_pmds) {
+    if (ptedit_init()) {
+        fprintf(stderr, "Failed to initialize ptedit\n");
+        return;
+    }
+
+    size_t huge_page_size = 2 * 1024 * 1024;
+    size_t num_pages = size / huge_page_size;
+
+    for (size_t i = 0; i < num_pages; ++i) {
+        void* cur = (char*)buffer_ptr + i * huge_page_size;
+        ptedit_entry_t entry = ptedit_resolve(cur, 0);
+        entry.pmd = original_pmds[i];
+        entry.valid = PTEDIT_VALID_MASK_PMD;
+        ptedit_update(cur, 0, &entry);
+    }
+
+    ptedit_cleanup();
 }
