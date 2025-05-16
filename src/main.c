@@ -14,6 +14,7 @@
 #include <time.h>
 #include <getopt.h>
 #include <sched.h>
+#include <unistd.h>
 
 #include "utils.h"
 #include "memory.h"
@@ -92,6 +93,9 @@ static void usage(const char *prog)
     puts("  -t, --timing            collect cycle counts");
     puts("  -v, --verbose           print flips to stdout as well");
     puts("  -u, --uncachable        make memory buffer uncachable");
+    puts("  -o, --op-type <N>       operation type (0 = read, 1 = write)");
+    puts("  -c, --cache-op <N>      cache operation (0 = none, 1 = CIVAC, 2 = CVAC)");
+    puts("  -d, --add-dsb <N>       add DSB after cache operation (0 = no, 1 = yes)");
     puts("  -h, --help              this message\n");
 }
 
@@ -128,6 +132,11 @@ int main(int argc, char *argv[])
     bool          verbose      = false;
     bool          seed_given   = false;
     bool          uncachable   = false;
+    
+    // New parameters for hammering strategy
+    int           op_type      = 0; // Default: read operation (LDR)
+    int           cache_op     = 0; // Default: no cache operation
+    int           add_dsb      = 0; // Default: no DSB after cache op
 
     static struct option long_opts[] = {
         {"size",   required_argument, 0, 's'},
@@ -140,23 +149,29 @@ int main(int argc, char *argv[])
         {"timing", no_argument,       0, 't'},
         {"verbose",no_argument,       0, 'v'},
         {"uncachable", no_argument,   0, 'u'},
+        {"op-type", required_argument, 0, 'o'},
+        {"cache-op", required_argument, 0, 'c'},
+        {"add-dsb", required_argument, 0, 'd'},
         {"help",   no_argument,       0, 'h'},
         {0,0,0,0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "s:i:n:H:B:P:S:tvu", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "s:i:n:H:B:P:S:tvuo:c:d:h", long_opts, NULL)) != -1) {
         switch (opt) {
             case 's': size_mb     = strtoul(optarg, NULL, 0); break;
             case 'i': iter        = atoi(optarg);            break;
             case 'n': hammer_iter = atoi(optarg);            break;
             case 'H': hpat        = lookup_hammer(optarg);   break;
-            case 'B': btype       = lookup_buf(optarg);       break;
+            case 'B': btype       = lookup_buf(optarg);      break;
             case 'P': pattern_name= optarg;                  pattern = lookup_pattern(optarg); break;
             case 'S': g_pattern_seed = strtoull(optarg, NULL, 0); seed_given = true; break;
             case 't': timing      = true;                    break;
             case 'v': verbose     = true;                    VERBOSE = 1; break;
-            case 'u': uncachable  = true;                    break; // Handle new option
+            case 'u': uncachable  = true;                    break;
+            case 'o': op_type     = atoi(optarg);            break;
+            case 'c': cache_op    = atoi(optarg);            break;
+            case 'd': add_dsb     = atoi(optarg);            break;
             default : usage(argv[0]); return opt=='h'?0:1;
         }
     }
@@ -172,6 +187,10 @@ int main(int argc, char *argv[])
     }
     printf("Starting test: size=%zu MB, iter=%d, hammer=%d, pattern=%s, seed=0x%llx, HP=%d, uncachable=%d, file=%s\n",
            size_mb, iter, hammer_iter, pattern_name, (unsigned long long)g_pattern_seed, btype, uncachable, out_name);
+    printf("Choosen strategy: op=%s, cache_op=%s, add_dsb=%s\n",
+           op_type == 0 ? "LDR" : "STR",
+           cache_op == 0 ? "none" : (cache_op == 1 ? "CIVAC" : "CVAC"),
+           add_dsb ? "yes" : "no");
     /* ---- write header to file ---- */
     FILE *hdr = fopen(out_name, "w");
     if (hdr) {
@@ -186,7 +205,7 @@ int main(int argc, char *argv[])
         printf("Starting...");
     }
 
-    bitflip_test(buf_bytes, btype, pattern, hpat, timing, iter, hammer_iter, out_name, uncachable);
+    bitflip_test(buf_bytes, btype, pattern, hpat, timing, iter, hammer_iter, out_name, uncachable, op_type, cache_op, add_dsb);
 
     puts("Done.");
     return 0;
