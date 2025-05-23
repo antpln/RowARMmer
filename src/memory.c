@@ -29,6 +29,12 @@
 #define BANK_MASK 0b000000000000001110000000000000
 #define ROW_OFFSET 16
 #define BANK_OFFSET 13
+#elif defined (RPI4)
+#define COL_MASK  0b000000000000000000000011111111111
+#define ROW_MASK  0b011111111111111111000000000000000
+#define BANK_MASK 0b000000000000000000111100000000000
+#define ROW_OFFSET 15
+#define BANK_OFFSET 11
 #else
 #define COL_MASK     0b00000000000000000000110001111011100
 #define SUBPART_MASK 0b00000000000000000000000000000100000
@@ -193,9 +199,15 @@ uint64_t get_bank(uint64_t addr) {
     uint64_t bank_bit0 = bit13 ^ bit14;
     uint64_t bank_bit1 = bit14;
     uint64_t bank_bit2 = bit15;
-
+    #elif defined(RPI4)
+    uint64_t bit11 = (phys_addr >> 11) & 1;
+    uint64_t bit12 = (phys_addr >> 12) & 1;
+    uint64_t bit13 = (phys_addr >> 13) & 1;
+    uint64_t bit14 = (phys_addr >> 14) & 1;
+    uint64_t bank_bit0 =  bit11 ^ bit12;
+    uint64_t bank_bit1 = bit13;
+    uint64_t bank_bit2 = bit14;
     return (bank_bit2 << 2) | (bank_bit1 << 1) | bank_bit0;
-
     #else 
     return 0;
     #endif
@@ -222,6 +234,8 @@ uint64_t get_channel(uint64_t addr)
 {
     #if defined(JETSON_NANO)
     return parity64(addr & CHANNEL_MASK);
+    #elif defined(RPI4)
+    return addr >> 32;
     #else
     return 0;
     #endif

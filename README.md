@@ -20,20 +20,14 @@ This test-bed targets **LPDDR4** memory in **TRR-protected systems** like the NV
 
 ## Prerequisites
 
-- NVIDIA Jetson Nano (4GB) or Raspberry Pi 3 Model B+
+- NVIDIA Jetson Nano (4GB) or Raspberry Pi 3 Model B+ or Raspberry Pi 4 (4GB)
 - Linux kernel headers installed
 - GCC toolchain
 - Git (for cloning dependencies)
 
 ## Setup
 
-1. Clone the repository with submodules:
-```sh
-git clone --recursive https://github.com/your-username/knock-knock.git
-cd knock-knock
-```
-
-2. Initialize PTEditor (required for uncacheable memory):
+Initialize PTEditor (required for uncacheable memory):
 ```sh
 make pteditor
 ```

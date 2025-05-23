@@ -33,6 +33,8 @@ ifeq ($(findstring Jetson Nano,$(DEVICE)),Jetson Nano)
     DEVICE_FLAGS := -DJETSON_NANO
 else ifeq ($(findstring Raspberry Pi 3 Model B Plus,$(DEVICE)),Raspberry Pi 3 Model B Plus)
     DEVICE_FLAGS := -DRPI3
+else ifeq ($(findstring Raspberry Pi 4,$(DEVICE)),Raspberry Pi 4)
+    DEVICE_FLAGS := -DRPI4
 else
     $(error "Unsupported device: $(DEVICE)")
 endif
