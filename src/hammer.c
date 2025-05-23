@@ -282,7 +282,6 @@ uint64_t hammer_multiple(addr_tuple *addrs, int num_addrs, int iter, bool timing
     {
         if (addrs[i].v_addr == NULL)
         {
-            fprintf(stderr, "Invalid address in hammer_multiple\n");
             return 0;
         }
     }
@@ -444,8 +443,6 @@ uint64_t pattern_many_sided(addr_tuple addr, int inter, bool timing, pfn_va_t *m
 {
     int current_length = 0;
     addr_tuple addrs[nb_sides];
-    addrs[0] = addr; // Start with the given address
-    current_length++;
     int bank = get_bank(addr.p_addr);
     int channel = get_channel(addr.p_addr);
     int column = get_column(addr.p_addr);
@@ -461,7 +458,16 @@ uint64_t pattern_many_sided(addr_tuple addr, int inter, bool timing, pfn_va_t *m
             current_length++;
             continue;
         }
-        if (current_length % 2 == 0) {
+        if (current_length == 0) {
+            addrs[current_length] = prev_row_deterministic(addr, map, pfn_va_len);
+            if(addrs[current_length].v_addr == NULL)
+            {
+                return 0;
+            }
+            current_length++;
+            continue;
+        }
+        else if(current_length % 2 == 0) {
             new_addr = prev_row_deterministic(prev_row_deterministic(addrs[current_length-2], map, pfn_va_len), map, pfn_va_len);
         } else {
             new_addr = next_row_deterministic(next_row_deterministic(addrs[current_length-2], map, pfn_va_len), map, pfn_va_len);
@@ -740,7 +746,7 @@ void bitflip_test(size_t buffer_size, buffer_type b_type, pattern_func pattern, 
             average_time = iter_time / hammer_iter;
             break;
         case PATTERN_MANY_SIDED:
-            iter_time = many_sided(addr, hammer_iter, timing, pmap, pmap_len, op_type, cache_op, add_dsb, nb_sides) / nb_sides;
+            iter_time = pattern_many_sided(addr, hammer_iter, timing, pmap, pmap_len, op_type, cache_op, add_dsb, nb_sides) / nb_sides;
             average_time = iter_time / hammer_iter;
             break;
         }
