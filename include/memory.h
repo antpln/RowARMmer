@@ -18,6 +18,8 @@ uint64_t get_bank(uint64_t addr);
 uint64_t get_column(uint64_t addr);
 uint64_t get_row(uint64_t addr);
 uint64_t get_channel(uint64_t addr);
+uint64_t get_subpartition(uint64_t addr);
+uint64_t get_device(uint64_t addr);
 uint64_t make_phys_addr(uint64_t row, uint64_t bank, uint64_t column);
 void print_location(addr_tuple addr);
 

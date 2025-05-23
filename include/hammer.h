@@ -13,8 +13,9 @@ typedef enum {
 typedef enum  {
     PATTERN_SINGLE,
     PATTERN_SINGLE_DECOY,
-    PATTERN_QUAD,
     PATTERN_DOUBLE,
+    PATTERN_QUAD,
+    PATTERN_MANY_SIDED
 } hammer_pattern;
 
 typedef struct {
@@ -33,7 +34,7 @@ uint64_t pattern_single(addr_tuple addr, int iter, bool timing, int op_type, int
 uint64_t pattern_single_decoy(addr_tuple addr, uint64_t* buffer, size_t size, int iter, bool timing, int op_type, int cache_op, int add_dsb);
 uint64_t pattern_quad(addr_tuple addr, uint64_t* buffer, size_t size, int iter, bool timing, pfn_va_t* map, size_t pfn_va_len, int op_type, int cache_op, int add_dsb);
 bitflip* detect_bitflips(uint64_t* buffer, size_t size, pattern_func pattern);
-void bitflip_test(size_t buffer_size, buffer_type b_type, pattern_func pattern, hammer_pattern hammer_pattern, bool timing, int iter, int hammer_iter, char *output_file, bool uncachable, int op_type, int cache_op, int add_dsb);
+void bitflip_test(size_t buffer_size, buffer_type b_type, pattern_func pattern, hammer_pattern hammer_pattern, bool timing, int iter, int hammer_iter, char *output_file, bool uncachable, int op_type, int cache_op, int add_dsb, int nb_sides);
 uint64_t *buffer_init(size_t size, buffer_type type, pattern_func pattern);
 
 #endif // HAMMER_H

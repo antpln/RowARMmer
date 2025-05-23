@@ -156,8 +156,7 @@ addr_tuple next_row_deterministic(addr_tuple addr, pfn_va_t *map, size_t pfn_va_
     addr_tuple new_addr = change_row_bits(addr, row_bits + 1, map, pfn_va_len);
     for(int i = 0; i < 8; i++) {
         new_addr = change_bank_bits(new_addr, i, map, pfn_va_len);
-        if (new_addr.v_addr != NULL && get_bank(new_addr.p_addr) == get_bank(addr.p_addr) && get_channel(new_addr.p_addr) == get_channel(addr.p_addr)) {
-            return new_addr;
+        if (new_addr.v_addr != NULL && get_bank(new_addr.p_addr) == get_bank(addr.p_addr) && get_channel(new_addr.p_addr) == get_channel(addr.p_addr)) {            return new_addr;
         }
     }
     addr_tuple invalid_addr = { .v_addr = NULL, .p_addr = new_addr.p_addr };

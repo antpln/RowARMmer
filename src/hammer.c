@@ -275,6 +275,78 @@ uint64_t hammer_double(addr_tuple addr_1, addr_tuple addr_2, int iter, bool timi
     return elapsed_time;
 }
 
+uint64_t hammer_multiple(addr_tuple *addrs, int num_addrs, int iter, bool timing, int op_type, int cache_op, int add_dsb)
+{
+    uint64_t elapsed_time = 0;
+    for(int i = 0; i < num_addrs; i++)
+    {
+        if (addrs[i].v_addr == NULL)
+        {
+            fprintf(stderr, "Invalid address in hammer_multiple\n");
+            return 0;
+        }
+    }
+    struct timespec start, end;
+    timespec_get(&start, TIME_UTC);
+    uint64_t backups[num_addrs];
+    for (int i = 0; i < num_addrs; i++)
+    {
+        backups[i] = *addrs[i].v_addr;
+    }
+
+    for(int i = 0; i < num_addrs; i++)
+    {
+        __asm__ volatile("DC CIVAC, %0" : : "r"(addrs[i].v_addr));
+    }
+    __asm__ volatile("ISB SY");
+    __asm__ volatile("DSB SY");
+    volatile uint64_t val;
+    for (int i = 0; i < num_addrs*iter; i++)
+    {
+        uint64_t *v_addr = addrs[i % num_addrs].v_addr;
+        switch(op_type)
+        {
+            case 0: // LDR
+                __asm__ volatile("LDR %0, [%1]" : "=r"(val) : "r"(v_addr));
+                break;
+            case 1: // STR
+                __asm__ volatile("STR %0, [%1]" : : "r"(val), "r"(v_addr));
+                break;
+            case 2: // ZVA
+                __asm__ volatile("DC ZVA, %0" : : "r"(v_addr));
+                break;
+            default:
+                fprintf(stderr, "Invalid operation type\n");
+                exit(EXIT_FAILURE);
+        }
+        switch(cache_op)
+        {
+            case 0: // No cache operation
+                break;
+            case 1: // CIVAC
+                __asm__ volatile("DC CIVAC, %0" : : "r"(v_addr));
+                break;
+            case 2: // CVAC
+                __asm__ volatile("DC CVAC, %0" : : "r"(v_addr));
+                break;
+            default:
+                fprintf(stderr, "Invalid cache operation type\n");
+                exit(EXIT_FAILURE);
+        }
+        if (add_dsb)
+        {
+            __asm__ volatile("DSB SY");
+        }
+    }
+    timespec_get(&end, TIME_UTC);
+    elapsed_time = (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
+    for (int i = 0; i < num_addrs; i++)
+    {
+        *addrs[i].v_addr = backups[i];
+    }
+    return elapsed_time;
+}
+
 /**
  * pattern_single - Executes a single hammering pattern.
  * @addr: The address tuple containing the virtual address to hammer.
@@ -366,6 +438,42 @@ uint64_t pattern_quad(addr_tuple addr, uint64_t *buffer, size_t size, int iter, 
     {
         return 0;
     }
+}
+
+uint64_t pattern_many_sided(addr_tuple addr, int inter, bool timing, pfn_va_t *map, size_t pfn_va_len, int op_type, int cache_op, int add_dsb, int nb_sides)
+{
+    int current_length = 0;
+    addr_tuple addrs[nb_sides];
+    addrs[0] = addr; // Start with the given address
+    current_length++;
+    int bank = get_bank(addr.p_addr);
+    int channel = get_channel(addr.p_addr);
+    int column = get_column(addr.p_addr);
+    int sub = get_subpartition(addr.p_addr);
+    while(current_length < nb_sides) {
+        addr_tuple new_addr;
+        if (current_length == 1) {
+            addrs[current_length] = next_row_deterministic(addr, map, pfn_va_len);
+            if(addrs[current_length].v_addr == NULL)
+            {
+                return 0;
+            }
+            current_length++;
+            continue;
+        }
+        if (current_length % 2 == 0) {
+            new_addr = prev_row_deterministic(prev_row_deterministic(addrs[current_length-2], map, pfn_va_len), map, pfn_va_len);
+        } else {
+            new_addr = next_row_deterministic(next_row_deterministic(addrs[current_length-2], map, pfn_va_len), map, pfn_va_len);
+        }
+        if(new_addr.v_addr == NULL || get_bank(new_addr.p_addr) != bank || get_channel(new_addr.p_addr) != channel || get_column(new_addr.p_addr) != column || get_subpartition(new_addr.p_addr) != sub)
+        {
+            return 0;
+        }
+        addrs[current_length] = new_addr;
+        current_length++;
+    }
+    return hammer_multiple(addrs, current_length, inter, timing, op_type, cache_op, add_dsb);
 }
 
 uint64_t pattern_double(addr_tuple addr, uint64_t *buffer, size_t size, int iter, bool timing, pfn_va_t *map, size_t pfn_va_len, int op_type, int cache_op, int add_dsb)
@@ -553,7 +661,7 @@ void buffer_init_check(uint64_t *buffer, size_t size, pattern_func pattern)
  * @cache_op: Cache operation: 0 for none, 1 for CIVAC, 2 for CVAC.
  * @add_dsb: Whether to add DSB barrier after cache op: 0 for no, 1 for yes.
  */
-void bitflip_test(size_t buffer_size, buffer_type b_type, pattern_func pattern, hammer_pattern hammer_pattern, bool timing, int iter, int hammer_iter, char *output_file, bool uncachable, int op_type, int cache_op, int add_dsb)
+void bitflip_test(size_t buffer_size, buffer_type b_type, pattern_func pattern, hammer_pattern hammer_pattern, bool timing, int iter, int hammer_iter, char *output_file, bool uncachable, int op_type, int cache_op, int add_dsb, int nb_sides)
 {
     FILE *file = NULL;
     if (output_file != NULL)
@@ -629,6 +737,10 @@ void bitflip_test(size_t buffer_size, buffer_type b_type, pattern_func pattern, 
             break;
         case PATTERN_DOUBLE:
             iter_time = pattern_double(addr, buffer, buffer_size, hammer_iter, timing, pmap, pmap_len, op_type, cache_op, add_dsb) / 2;
+            average_time = iter_time / hammer_iter;
+            break;
+        case PATTERN_MANY_SIDED:
+            iter_time = many_sided(addr, hammer_iter, timing, pmap, pmap_len, op_type, cache_op, add_dsb, nb_sides) / nb_sides;
             average_time = iter_time / hammer_iter;
             break;
         }

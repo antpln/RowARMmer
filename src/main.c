@@ -67,6 +67,7 @@ static hammer_pattern lookup_hammer(const char *name)
     if (!strcmp(name, "decoy"))         return PATTERN_SINGLE_DECOY;
     if (!strcmp(name, "quad"))          return PATTERN_QUAD;
     if (!strcmp(name, "double"))        return PATTERN_DOUBLE;
+    if (!strcmp(name, "many"))          return PATTERN_MANY_SIDED;
     fprintf(stderr, "Unknown hammer pattern '%s' – falling back to quad.\n", name);
     return PATTERN_QUAD;
 }
@@ -87,7 +88,7 @@ static void usage(const char *prog)
     puts("  -s, --size <MB>         buffer size in megabytes (default 32)");
     puts("  -i, --iter <N>          random hammer placements (default 1000)");
     puts("  -n, --hammer <N>        activations per placement (default 1000000)");
-    puts("  -H, --hammer-pattern    single | decoy | quad | double (default quad)");
+    puts("  -H, --hammer-pattern    single | decoy | quad | double | many (default quad)");
     puts("  -B, --buffer-type       normal | 2M | 1G       (default normal)");
     puts("  -P, --pattern           aa | 55 | parity | rand (default aa)");
     puts("  -S, --seed <hex/dec>    seed for rand pattern (default epoch time)");
@@ -96,6 +97,7 @@ static void usage(const char *prog)
     puts("  -o, --op-type <N>       operation type (0 = read, 1 = write, 2 = ZVA)");
     puts("  -c, --cache-op <N>      cache operation (0 = none, 1 = CIVAC, 2 = CVAC)");
     puts("  -d, --add-dsb <N>       add DSB after cache operation (0 = no, 1 = yes)");
+    puts("  -m, --sides <N>        number of sides for hammering (default 3, only used with many pattern)");
     puts("  -h, --help              this message\n");
 }
 
@@ -116,6 +118,8 @@ void pin_to_core(int core_id)
     }
 }
 
+
+int nb_sides = 3; // Default to 3 sides
 
 int main(int argc, char *argv[])
 {
@@ -151,16 +155,26 @@ int main(int argc, char *argv[])
         {"op-type", required_argument, 0, 'o'},
         {"cache-op", required_argument, 0, 'c'},
         {"add-dsb", required_argument, 0, 'd'},
+        {"sides",  required_argument, 0, 'm'},
         {"help",   no_argument,       0, 'h'},
         {0,0,0,0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "s:i:n:H:B:P:S:tvuo:c:d:h", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "s:i:n:H:B:P:S:tvuo:c:d:m:h", long_opts, NULL)) != -1) {
         switch (opt) {
             case 's': size_mb     = strtoul(optarg, NULL, 0); break;
             case 'i': iter        = atoi(optarg);            break;
-            case 'n': hammer_iter = atoi(optarg);            break;
+            case 'n': 
+                hammer_iter = atoi(optarg);
+                break;
+            case 'm':
+                nb_sides = atoi(optarg);
+                if (nb_sides < 2) {
+                    fprintf(stderr, "Number of sides must be at least 2\n");
+                    exit(EXIT_FAILURE);
+                }
+                break;
             case 'H': hpat        = lookup_hammer(optarg);   break;
             case 'B': btype       = lookup_buf(optarg);      break;
             case 'P': pattern_name= optarg;                  pattern = lookup_pattern(optarg); break;
@@ -204,7 +218,7 @@ int main(int argc, char *argv[])
         printf("Starting...");
     }
 
-    bitflip_test(buf_bytes, btype, pattern, hpat, true, iter, hammer_iter, out_name, uncachable, op_type, cache_op, add_dsb);
+    bitflip_test(buf_bytes, btype, pattern, hpat, true, iter, hammer_iter, out_name, uncachable, op_type, cache_op, add_dsb, nb_sides);
 
     puts("Done.");
     return 0;
