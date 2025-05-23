@@ -1,4 +1,4 @@
-# Jetson-Nano Rowhammer Test-Bed
+# ARMv8 Rowhammer Test-Bed
 
 A Rowhammer-based DRAM mapping reverse-engineering framework inspired by:
 
@@ -17,6 +17,26 @@ This test-bed targets **LPDDR4** memory in **TRR-protected systems** like the NV
 - VA ↔ PA reverse-lookup with support for 64-bit PFNs
 
 ---
+
+## Prerequisites
+
+- NVIDIA Jetson Nano (4GB) or Raspberry Pi 3 Model B+
+- Linux kernel headers installed
+- GCC toolchain
+- Git (for cloning dependencies)
+
+## Setup
+
+1. Clone the repository with submodules:
+```sh
+git clone --recursive https://github.com/your-username/knock-knock.git
+cd knock-knock
+```
+
+2. Initialize PTEditor (required for uncacheable memory):
+```sh
+make pteditor
+```
 
 ## 🔧 Build
 
@@ -56,7 +76,6 @@ This will build the main binary: `hammer_test`
 | `-B`, `--buffer-type`   | `normal` \| `2M` \| `1G` (default: `normal`)               |
 | `-P`, `--pattern`       | `aa` \| `55` \| `parity` \| `rand` (default: `aa`)          |
 | `-S`, `--seed <value>`  | Seed for `rand` pattern (default: current epoch time)      |
-| `-t`, `--timing`        | Collect cycle counts using PMU                             |
 | `-v`, `--verbose`       | Print bitflips to stdout                                   |
 | `-u`, `--uncachable`     | Make the memory buffer uncachable (default: disabled)         |
 | `-h`, `--help`          | Print this usage message                                   |
