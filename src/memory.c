@@ -192,18 +192,18 @@ uint64_t get_bank(uint64_t addr) {
     return (b2 << 2) | (b1 << 1) | b0;
     
     #elif defined(RPI3)
-    uint64_t bit13 = (phys_addr >> 13) & 1;
-    uint64_t bit14 = (phys_addr >> 14) & 1;
-    uint64_t bit15 = (phys_addr >> 15) & 1;
+    uint64_t bit13 = (addr >> 13) & 1;
+    uint64_t bit14 = (addr >> 14) & 1;
+    uint64_t bit15 = (addr >> 15) & 1;
 
     uint64_t bank_bit0 = bit13 ^ bit14;
     uint64_t bank_bit1 = bit14;
     uint64_t bank_bit2 = bit15;
     #elif defined(RPI4)
-    uint64_t bit11 = (phys_addr >> 11) & 1;
-    uint64_t bit12 = (phys_addr >> 12) & 1;
-    uint64_t bit13 = (phys_addr >> 13) & 1;
-    uint64_t bit14 = (phys_addr >> 14) & 1;
+    uint64_t bit11 = (addr >> 11) & 1;
+    uint64_t bit12 = (addr >> 12) & 1;
+    uint64_t bit13 = (addr >> 13) & 1;
+    uint64_t bit14 = (addr >> 14) & 1;
     uint64_t bank_bit0 =  bit11 ^ bit12;
     uint64_t bank_bit1 = bit13;
     uint64_t bank_bit2 = bit14;
