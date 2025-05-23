@@ -41,14 +41,12 @@ static inline void init_cache_counters(void)
 {
     pmu_global_start(); /* reset + enable */
 
-    pmu_setup_event(0, 0x03); /* L1D refill */
-    pmu_setup_event(1, 0x04); /* L1D access */
-    pmu_setup_event(2, 0x17); /* L2D refill */
-    pmu_setup_event(3, 0x16); /* L2D access */
-    pmu_setup_event(4, 0x52); /* L2D_CACHE_REFILL_LD */
-    pmu_setup_event(5, 0x53); /* L2D_CACHE_REFILL_ST */
-    pmu_setup_event(6, 0x66); /* MEM_ACCESS_LD */
-    pmu_setup_event(7, 0x67); /* MEM_ACCESS_ST */
+    pmu_setup_event(0, 0x04); /* L1D_CACHE_ACCESS - Indicates L1 data cache access */
+    pmu_setup_event(1, 0x03); /* L1D_CACHE_REFILL - Indicates L1 cache line fill from outside L1 */
+    pmu_setup_event(2, 0x17); /* L2D_CACHE_REFILL - Indicates L2 cache line fill from outside L2 */
+    pmu_setup_event(3, 0x72); /* LDST_SPEC - Instruction architecturally executed, load or store */
+    pmu_setup_event(4, 0x66); /* MEM_ACCESS_LD - Data memory access, read */
+    pmu_setup_event(5, 0x67); /* MEM_ACCESS_ST - Data memory access, write */
 }
 
 static inline uint64_t read_event_counter(int idx)
@@ -60,14 +58,12 @@ static inline uint64_t read_event_counter(int idx)
     return val;
 }
 
-static inline uint64_t read_l1d_refill_counter() { return read_event_counter(0); }
-static inline uint64_t read_l1d_access_counter() { return read_event_counter(1); }
-static inline uint64_t read_l2d_refill_counter() { return read_event_counter(2); }
-static inline uint64_t read_l2d_access_counter() { return read_event_counter(3); }
-static inline uint64_t read_l2d_cache_refill_ld_counter() { return read_event_counter(4); }
-static inline uint64_t read_l2d_cache_refill_st_counter() { return read_event_counter(5); }
-static inline uint64_t read_mem_access_ld_counter() { return read_event_counter(6); }
-static inline uint64_t read_mem_access_st_counter() { return read_event_counter(7); }
+static inline uint64_t read_l1d_access_counter() { return read_event_counter(0); }
+static inline uint64_t read_l1d_refill_counter() { return read_event_counter(1); }
+static inline uint64_t read_l2d_cache_refill_counter() { return read_event_counter(2); }
+static inline uint64_t read_ldst_spec_counter() { return read_event_counter(3); }
+static inline uint64_t read_mem_access_ld_counter() { return read_event_counter(4); }
+static inline uint64_t read_mem_access_st_counter() { return read_event_counter(5); }
 
 static inline void reset_event_counter(int counter)
 {
@@ -229,23 +225,24 @@ uint64_t perform_test(addr_tuple addr, int iter, const char *operation, const ch
     timespec_get(&end, TIME_UTC);
     __asm__ volatile("ISB SY");
     __asm__ volatile("DSB SY");
+    __asm__ volatile("DC CVAC, %0" ::"r"(addr.v_addr));
+    
 
     elapsed_time = (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
 
-    uint64_t l1d_refill = read_l1d_refill_counter();
     uint64_t l1d_access = read_l1d_access_counter();
-    uint64_t l2d_refill = read_l2d_refill_counter();
-    uint64_t l2d_access = read_l2d_access_counter();
-    uint64_t l2d_cache_refill_ld = read_l2d_cache_refill_ld_counter();
-    uint64_t l2d_cache_refill_st = read_l2d_cache_refill_st_counter();
+    uint64_t l1d_refill = read_l1d_refill_counter();
+    uint64_t l2d_refill = read_l2d_cache_refill_counter();
+    uint64_t ldst_spec = read_ldst_spec_counter();
     uint64_t mem_access_ld = read_mem_access_ld_counter();
     uint64_t mem_access_st = read_mem_access_st_counter();
 
+    double seconds = elapsed_time / 1e9;  // Convert ns to seconds
+
     printf("Average %s + %s%s time: %lu ns\n", operation, cache_type, add_dsb ? " + DSB" : "", elapsed_time / iter);
-    printf("L1D refill: %lu, L1D access: %lu, L2D refill: %lu, L2D access: %lu, L2D_CACHE_REFILL_LD: %lu, L2D_CACHE_REFILL_ST: %lu\n",
-           l1d_refill, l1d_access, l2d_refill, l2d_access, l2d_cache_refill_ld, l2d_cache_refill_st);
-    uint64_t nb_act = l2d_cache_refill_ld + l2d_cache_refill_st;
-    printf("ACTs per second: %lu\n\n", nb_act * 1000000000 / elapsed_time);
+    printf("L1D access: %lu, L1D refill: %lu, L2D refill: %lu\n", l1d_access, l1d_refill, l2d_refill);
+    printf("Speculative LD/ST: %lu\n", ldst_spec);
+    printf("Memory LD: %lu, Memory ST: %lu\n\n", mem_access_ld, mem_access_st);
 
     return elapsed_time;
 }
@@ -253,6 +250,11 @@ uint64_t perform_test(addr_tuple addr, int iter, const char *operation, const ch
 
 void dump_mts()
 {
+    if(ptedit_init())
+    {
+        fprintf(stderr, "ptedit_init failed\n");
+        return;
+    }
     size_t mts = ptedit_get_mts();
     printf("MTs (raw): %zx\n", mts);
     int i;
@@ -261,6 +263,7 @@ void dump_mts()
         printf("MT%d: %d -> %s\n", i, ptedit_get_mt(i),
                ptedit_mt_to_string(ptedit_get_mt(i)));
     }
+    ptedit_cleanup();
 }
 
 #define PTEDIT_PMD_PSE (1ULL << 7)
@@ -317,13 +320,12 @@ int access_time(void *ptr)
         sum += end - start;
     }
 
-    uint64_t l1d_refill = read_l1d_refill_counter();
     uint64_t l1d_access = read_l1d_access_counter();
-    uint64_t l2d_refill = read_l2d_refill_counter();
-    uint64_t l2d_access = read_l2d_access_counter();
+    uint64_t l1d_refill = read_l1d_refill_counter();
+    uint64_t l2d_refill = read_l2d_cache_refill_counter();
 
-    printf("L1D refill: %lu, L1D access: %lu, L2D refill: %lu, L2D access: %lu\n",
-           l1d_refill, l1d_access, l2d_refill, l2d_access);
+    printf("L1D access: %lu, L1D refill: %lu, L2D refill: %lu\n",
+           l1d_access, l1d_refill, l2d_refill);
 
     return (int)(sum / MEASUREMENTS);
 }
@@ -349,6 +351,7 @@ void instructions_timing_test(addr_tuple addr, int iter, uint64_t *buffer, size_
 {
     printf("\n");
     init_cache_counters();
+    dump_mts();
     const char *operations[] = {"LDR", "STR"};
     const char *cache_types[] = {"CVAC", "CIVAC"};
     bool dsb_variants[] = {false, true};

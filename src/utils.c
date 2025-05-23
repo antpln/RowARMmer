@@ -7,6 +7,9 @@
 #include <assert.h>
 #include <ptedit_header.h>
 
+
+
+
 /**
  * build_pfn_map - Builds a mapping of page frame numbers (PFNs) to virtual addresses.
  * @buf: The buffer to map.
@@ -132,11 +135,18 @@ addr_tuple gen_addr_tuple(uint64_t *v_addr)
  */
 addr_tuple gen_random_addr(uint64_t *buffer, size_t size)
 {
-    addr_tuple addr;
-    uint64_t offset = (uint64_t)buffer + (rand() % size);
-    addr.v_addr = (uint64_t *)offset;
-    addr.p_addr = get_phys_addr(offset);
-    return addr;
+    size_t alignment = 64; // Align to 64 bytes
+    size_t aligned_size = size & ~(alignment - 1);
+    if (aligned_size == 0)
+    {
+        fprintf(stderr, "Error: Buffer size is too small for alignment\n");
+        exit(EXIT_FAILURE);
+    }
+
+    size_t random_offset = (rand() % (aligned_size / alignment)) * alignment;
+    uint64_t *random_addr = (uint64_t *)((char *)buffer + random_offset);
+
+    return gen_addr_tuple(random_addr);
 }
 
 /**
@@ -169,7 +179,8 @@ int parity64(uint64_t x)
 size_t make_uncacheable(void *buffer_ptr)
 {
     ptedit_init();
-    int uncachable_memory_type = ptedit_find_first_mt(PTEDIT_MT_UC);
+    //int uncachable_memory_type = ptedit_find_first_mt(PTEDIT_MT_UC);
+    int uncachable_memory_type = 3;
     ptedit_entry_t page_table_entry = ptedit_resolve(buffer_ptr, 0);
     size_t original_page_descriptor = page_table_entry.pmd;
     page_table_entry.pmd = ptedit_apply_mt_huge(page_table_entry.pmd, uncachable_memory_type);
@@ -182,7 +193,7 @@ size_t make_uncacheable(void *buffer_ptr)
 size_t make_cacheable(void *buffer_ptr, size_t original_page_descriptor)
 {
     ptedit_init();
-    int uncachable_memory_type = ptedit_find_first_mt(PTEDIT_MT_UC);
+    //int uncachable_memory_type = ptedit_find_first_mt(PTEDIT_MT_UC);
     ptedit_entry_t page_table_entry = ptedit_resolve(buffer_ptr, 0);
     page_table_entry.pmd = original_page_descriptor;
     page_table_entry.valid = PTEDIT_VALID_MASK_PMD;
@@ -197,12 +208,13 @@ size_t* make_uncacheable_multi(void *buffer_ptr, size_t size) {
         return NULL;
     }
 
-    int uc_mt = ptedit_find_first_mt(PTEDIT_MT_UC);
+    /*int uc_mt = ptedit_find_first_mt(PTEDIT_MT_UC);
     if (uc_mt == -1) {
         fprintf(stderr, "No UC memory type available\n");
         ptedit_cleanup();
         return NULL;
-    }
+    }*/
+    int uc_mt = 3;
 
     size_t huge_page_size = 2 * 1024 * 1024;
     size_t num_pages = size / huge_page_size;
@@ -216,6 +228,7 @@ size_t* make_uncacheable_multi(void *buffer_ptr, size_t size) {
         entry.pmd = ptedit_apply_mt_huge(entry.pmd, uc_mt);
         entry.valid = PTEDIT_VALID_MASK_PMD;
         ptedit_update(cur, 0, &entry);
+        ptedit_invalidate_tlb(cur);
     }
 
     ptedit_cleanup();
@@ -237,6 +250,7 @@ void make_cacheable_multi(void *buffer_ptr, size_t size, size_t* original_pmds) 
         entry.pmd = original_pmds[i];
         entry.valid = PTEDIT_VALID_MASK_PMD;
         ptedit_update(cur, 0, &entry);
+        ptedit_invalidate_tlb(cur);
     }
 
     ptedit_cleanup();

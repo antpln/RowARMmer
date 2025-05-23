@@ -24,6 +24,21 @@ SRCS      := $(wildcard $(SRC_DIR)/*.c)
 OBJS      := $(SRCS:$(SRC_DIR)/%.c=$(SRC_DIR)/%.o)
 TARGET    := hammer_test
 
+### architecture detection ------------------------------------------------------
+ARCH := $(shell uname -m)
+DEVICE := $(shell cat /proc/device-tree/model 2>/dev/null || echo "unknown")
+
+### device-specific definitions ------------------------------------------------
+ifeq ($(findstring Jetson Nano,$(DEVICE)),Jetson Nano)
+    DEVICE_FLAGS := -DJETSON_NANO
+else ifeq ($(findstring Raspberry Pi 3 Model B Plus,$(DEVICE)),Raspberry Pi 3 Model B Plus)
+    DEVICE_FLAGS := -DRPI3
+else
+    $(error "Unsupported device: $(DEVICE)")
+endif
+
+$(info Device detected: $(DEVICE))
+
 ### toolchain + flags ----------------------------------------------------------
 CC        ?= gcc
 INC       := -I$(INC_DIR) -IPTEditor
@@ -34,7 +49,7 @@ CFLAGS    := -std=gnu99 -O2 \
              -fno-inline -fno-tree-vectorize -fno-tree-slp-vectorize \
              -fno-aggressive-loop-optimizations -fno-builtin \
              -fno-strict-aliasing -fno-omit-frame-pointer \
-             -D_GNU_SOURCE $(INC)
+             -D_GNU_SOURCE $(INC) $(DEVICE_FLAGS)
 LDFLAGS :=
 
 .PHONY: all clean run huge2m enable_pmu prepare
@@ -74,8 +89,8 @@ pteditor:
 ### prepare -------------------------------------------------------------------
 prepare:
 	mkdir logs || echo "logs directory already exists"
-	sudo make huge2m
 	sudo make enable_pmu
+	sudo make huge2m
 
 ### clean ---------------------------------------------------------------------
 clean:

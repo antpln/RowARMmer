@@ -33,7 +33,7 @@ pfn_va_t *build_pfn_map(void *buf, size_t bytes, size_t *out_n);
 void *pa_to_va(uint64_t pa, pfn_va_t *map, size_t n);
 size_t make_uncachable(void *buffer_ptr);
 size_t make_cachable(void *buffer_ptr, size_t orignal_pmd);
-size_t *make_uncachable_multi(void *buffer_ptr, size_t size);
+size_t *make_uncacheable_multi(void *buffer_ptr, size_t size);
 void make_cachable_multi(void *buffer_ptr, size_t size, size_t *original_pmds);
 
 static inline uint64_t read_pmccntr(void)

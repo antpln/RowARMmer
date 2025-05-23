@@ -9,14 +9,12 @@
 #include <time.h>
 #include <tests.h>
 
-volatile uint64_t g_hammer_sink;
-
 /**
  * hammer_single - Performs a single hammering operation on a given address.
  * @addr: The address tuple containing the virtual address to hammer.
  * @iter: The number of iterations to perform.
  * @timing: Boolean flag to enable timing measurement.
- * @op_type: Operation type: 0 for LDR (read), 1 for STR (write).
+ * @op_type: Operation type: 0 for LDR (read), 1 for STR (write), 2 for ZVA.
  * @cache_op: Cache operation: 0 for none, 1 for CIVAC, 2 for CVAC.
  * @add_dsb: Whether to add DSB barrier after cache op: 0 for no, 1 for yes.
  *
@@ -30,15 +28,17 @@ uint64_t hammer_single(addr_tuple addr, int iter, bool timing, int op_type, int 
     uint64_t elapsed_time = 0;
 
     uint64_t tmp = *v_addr;
+    uint64_t backup = *v_addr;
+
+    uint8_t backup1[64];
+    memcpy(backup1, (void *)((uintptr_t)addr.v_addr & ~0x3F), 64);
+
     // Clean up
     __asm__ volatile("DC CIVAC, %0" : : "r"(v_addr));
     __asm__ volatile("ISB SY");
     __asm__ volatile("DSB SY");
 
-    if (timing)
-    {
-        timespec_get(&start, TIME_UTC);
-    }
+    timespec_get(&start, TIME_UTC);
 
     __asm__ volatile(
         // Initialize loop variables from C input
@@ -75,7 +75,9 @@ uint64_t hammer_single(addr_tuple addr, int iter, bool timing, int op_type, int 
         "dsb sy\n"     // full system DSB (ensures cache ops complete before continuing)
         "20:\n"
 
-        // --- Load/Store Dispatch ---
+        // --- Load/Store/ZVA Dispatch ---
+        "cmp x2, #2\n" // if op_type == 2
+        "b.eq 40f\n"   // jump to ZVA
         "cmp x2, #1\n" // if op_type == 1
         "b.eq 30f\n"   // jump to STR
 
@@ -90,6 +92,11 @@ uint64_t hammer_single(addr_tuple addr, int iter, bool timing, int op_type, int 
         "dmb sy\n"       // memory barrier before store
         "str x3, [x1]\n" // store tmp value at address
         "dmb sy\n"       // memory barrier after store
+        "b 31f\n"        // jump to loop decrement
+
+        // --- DC ZVA path ---
+        "40:\n"
+        "dc zva, x1\n" // zero cache line at address
 
         // --- Loop decrement and branch ---
         "31:\n"
@@ -105,18 +112,18 @@ uint64_t hammer_single(addr_tuple addr, int iter, bool timing, int op_type, int 
           [add_dsb] "r"(add_dsb)
         : "x0", "x1", "x2", "x3", "x4", "x5", "x6", "memory");
 
-    if (timing)
+    timespec_get(&end, TIME_UTC);
+    elapsed_time = (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
+    *v_addr = backup;
+    if (op_type == 2)
     {
-        timespec_get(&end, TIME_UTC);
-        elapsed_time = (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
+        memcpy((void *)((uintptr_t)v_addr & ~0x3F), backup1, 64);
     }
-
     // Safe guard against unwanted value changes
-    __asm__ volatile("LDR %0, [%1]" : "=r"(val) : "r"(v_addr));
-    if (val != tmp)
+    if (*v_addr != backup)
     {
         perror("Wrong hammered value");
-        fprintf(stderr, "Expected: %lx, Actual: %lx\n", tmp, val);
+        fprintf(stderr, "Expected: %lx, Actual: %lx\n", tmp, *v_addr);
         exit(EXIT_FAILURE);
     }
 
@@ -129,7 +136,7 @@ uint64_t hammer_single(addr_tuple addr, int iter, bool timing, int op_type, int 
  * @addr_2: The second address tuple containing the virtual address to hammer.
  * @iter: The number of iterations to perform.
  * @timing: Boolean flag to enable timing measurement.
- * @op_type: Operation type: 0 for LDR (read), 1 for STR (write).
+ * @op_type: Operation type: 0 for LDR (read), 1 for STR (write), 2 for ZVA.
  * @cache_op: Cache operation: 0 for none, 1 for CIVAC, 2 for CVAC.
  * @add_dsb: Whether to add DSB barrier after cache op: 0 for no, 1 for yes.
  *
@@ -146,16 +153,19 @@ uint64_t hammer_double(addr_tuple addr_1, addr_tuple addr_2, int iter, bool timi
 
     uint64_t tmp1 = *v_addr_1;
     uint64_t tmp2 = *v_addr_2;
+    uint64_t tmp1_m = ~tmp1;
+    uint64_t tmp2_m = ~tmp2;
+
+    uint8_t backup1[64], backup2[64];
+    memcpy(backup1, (void *)((uintptr_t)addr_1.v_addr & ~0x3F), 64);
+    memcpy(backup2, (void *)((uintptr_t)addr_2.v_addr & ~0x3F), 64);
     // Clean up
     __asm__ volatile("DC CIVAC, %0" : : "r"(v_addr_1));
     __asm__ volatile("DC CIVAC, %0" : : "r"(v_addr_2));
     __asm__ volatile("ISB SY");
     __asm__ volatile("DSB SY");
 
-    if (timing)
-    {
-        timespec_get(&start, TIME_UTC);
-    }
+    timespec_get(&start, TIME_UTC);
 
     __asm__ volatile(
         // Initialize loop variables from C input
@@ -163,103 +173,103 @@ uint64_t hammer_double(addr_tuple addr_1, addr_tuple addr_2, int iter, bool timi
         "mov x1, %[addr1]\n"    // x1 = first address
         "mov x2, %[addr2]\n"    // x2 = second address
         "mov x3, %[op_type]\n"  // x3 = operation type: 0 for LDR, 1 for STR
-        "mov x4, %[tmp1]\n"     // x4 = value to store for first address
-        "mov x5, %[tmp2]\n"     // x5 = value to store for second address
+        "mov x4, %[tmp1_m]\n"   // x4 = value to store for first address
+        "mov x5, %[tmp2_m]\n"   // x5 = value to store for second address
         "mov x6, %[cache_op]\n" // x6 = cache flush type
         "mov x7, %[add_dsb]\n"  // x7 = whether to add DSB
 
         // === Start of loop ===
         "1:\n"
 
-        // --- Cache Maintenance For Both Addresses ---
+        // --- First perform both cache operations ---
         "cmp x6, #1\n" // if cache_op == 1 (CIVAC)
-        "b.eq 10f\n"   // jump to CIVAC for both addresses
+        "b.eq 10f\n"   // jump to CIVAC
         "cmp x6, #2\n" // if cache_op == 2 (CVAC)
-        "b.eq 20f\n"   // jump to CVAC
-        "b 30f\n"      // else, skip cache maintenance
+        "b.eq 11f\n"   // jump to CVAC
+        "b 12f\n"      // skip cache operations if none
 
-        // --- DC CIVAC for both addresses consecutively ---
+        // --- CIVAC for both addresses ---
         "10:\n"
-        "dc civac, x1\n" // Clean & Invalidate first address to PoC
-        "dc civac, x2\n" // Clean & Invalidate second address to PoC
-        // Optional DSB after cache ops
-        "cmp x7, #0\n" // if add_dsb == 0
-        "b.eq 30f\n"   // skip barrier
-        "dsb sy\n"     // full system DSB after both cache operations
-        "b 30f\n"      // jump to memory access section
+        "dc civac, x1\n" // Clean & Invalidate first address
+        "dc civac, x2\n" // Clean & Invalidate second address
+        "b 12f\n"        // continue to barrier check
 
-        // --- DC CVAC handling ---
+        // --- CVAC for both addresses ---
+        "11:\n"
+        "dc cvac, x1\n" // Clean first address
+        "dc cvac, x2\n" // Clean second address
+
+        // --- Optional barrier after cache operations ---
+        "12:\n"
+        "cmp x7, #0\n" // check if barrier needed
+        "b.eq 20f\n"   // skip if no barrier
+        "dsb sy\n"     // barrier after cache operations
+
+        // --- Memory operations ---
         "20:\n"
-        // Process first address
-        "dc cvac, x1\n" // Clean first address to PoC
-        // Optional DSB after first cache op
-        "cmp x7, #0\n" // if add_dsb == 0
-        "b.eq 21f\n"   // skip barrier
-        "dsb sy\n"     // full system DSB
+        "cmp x3, #2\n" // check operation type for ZVA
+        "b.eq 40f\n"   // branch to ZVA if op_type == 2
+        "cmp x3, #1\n" // check operation type
+        "b.eq 30f\n"   // branch to STR if op_type == 1
 
-        // Process second address
-        "21:\n"
-        "dc cvac, x2\n" // Clean second address to PoC
-        // Optional DSB after second cache op
-        "cmp x7, #0\n" // if add_dsb == 0
-        "b.eq 30f\n"   // skip barrier
-        "dsb sy\n"     // full system DSB
+        // --- LDR path (both loads) ---
+        "ldr x10, [x1]\n" // load first address
+        "ldr x11, [x2]\n" // load second address
+        "isb\n"           // barrier after loads
+        "b 31f\n"         // continue to loop end
 
-        // --- Memory Access Section ---
+        // --- STR path (both stores) ---
         "30:\n"
-        // First address access
-        "cmp x3, #1\n" // if op_type == 1
-        "b.eq 31f\n"   // jump to STR for first address
+        "str x4, [x1]\n" // store to first address
+        "str x5, [x2]\n" // store to second address
+        "isb\n"          // barrier after stores
+        "b 31f\n"        // continue to loop end
 
-        // LDR path for first address
-        "dmb sy\n"        // memory barrier before load
-        "ldr x10, [x1]\n" // load from first address
-        "dmb sy\n"        // memory barrier after load
-        "b 32f\n"         // jump to second address processing
+        // --- DC ZVA path (both addresses) ---
+        "40:\n"
+        "dmb sy\n"     // barrier before ZVA operations
+        "dc zva, x1\n" // zero cache line at first address
+        "dc zva, x2\n" // zero cache line at second address
+        "dmb sy\n"     // barrier after ZVA operations
 
-        // STR path for first address
+        // --- Loop control ---
         "31:\n"
-        "dmb sy\n"       // memory barrier before store
-        "str x4, [x1]\n" // store value at first address
-        "dmb sy\n"       // memory barrier after store
-
-        // Second address access
-        "32:\n"
-        "cmp x3, #1\n" // if op_type == 1
-        "b.eq 33f\n"   // jump to STR for second address
-
-        // LDR path for second address
-        "dmb sy\n"        // memory barrier before load
-        "ldr x11, [x2]\n" // load from second address
-        "dmb sy\n"        // memory barrier after load
-        "b 34f\n"         // jump to loop decrement
-
-        // STR path for second address
-        "33:\n"
-        "dmb sy\n"       // memory barrier before store
-        "str x5, [x2]\n" // store value at second address
-        "dmb sy\n"       // memory barrier after store
-
-        // Loop decrement and branch
-        "34:\n"
-        "subs x0, x0, #1\n" // subtract 1 from loop counter
-        "b.ne 1b\n"         // if not zero, branch to start of loop (label 1)
+        "subs x0, x0, #1\n" // decrement counter
+        "b.ne 1b\n"         // loop if not done
 
         :
         : [iter] "r"(iter),
           [addr1] "r"(v_addr_1),
           [addr2] "r"(v_addr_2),
           [op_type] "r"(op_type),
-          [tmp1] "r"(tmp1),
-          [tmp2] "r"(tmp2),
+          [tmp1_m] "r"(tmp1_m),
+          [tmp2_m] "r"(tmp2_m),
           [cache_op] "r"(cache_op),
           [add_dsb] "r"(add_dsb)
         : "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x10", "x11", "memory");
 
-    if (timing)
+    timespec_get(&end, TIME_UTC);
+    elapsed_time = (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
+    // Restore values before checking
+    *v_addr_1 = tmp1;
+    *v_addr_2 = tmp2;
+    if (op_type == 2)
     {
-        timespec_get(&end, TIME_UTC);
-        elapsed_time = (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
+        memcpy((void *)((uintptr_t)v_addr_1 & ~0x3F), backup1, 64);
+        memcpy((void *)((uintptr_t)v_addr_2 & ~0x3F), backup2, 64);
+    }
+    // Last check that we didn't change the values
+    if (*v_addr_1 != tmp1)
+    {
+        perror("Wrong hammered value");
+        fprintf(stderr, "Expected: %lx, Actual: %lx\n", tmp1, *v_addr_1);
+        exit(EXIT_FAILURE);
+    }
+    if (*v_addr_2 != tmp2)
+    {
+        perror("Wrong hammered value");
+        fprintf(stderr, "Expected: %lx, Actual: %lx\n", tmp2, *v_addr_2);
+        exit(EXIT_FAILURE);
     }
 
     return elapsed_time;
@@ -322,15 +332,28 @@ uint64_t pattern_single_decoy(addr_tuple addr, uint64_t *buffer, size_t size, in
  */
 uint64_t pattern_quad(addr_tuple addr, uint64_t *buffer, size_t size, int iter, bool timing, pfn_va_t *map, size_t pfn_va_len, int op_type, int cache_op, int add_dsb)
 {
-    addr_tuple addr_n_plus = next_row(addr, map, pfn_va_len);
-    addr_tuple addr_n_minus = prev_row(addr, map, pfn_va_len);
+    addr_tuple addr_n_plus = next_row_deterministic(addr, map, pfn_va_len);
+    addr_tuple addr_n_minus = prev_row_deterministic(addr, map, pfn_va_len);
     if (addr_n_plus.v_addr == NULL || addr_n_minus.v_addr == NULL)
     {
         return 0;
     }
-    addr_tuple addr_f_plus = next_row(addr_n_plus, map, pfn_va_len);
-    addr_tuple addr_f_minus = prev_row(addr_n_minus, map, pfn_va_len);
+    addr_tuple addr_f_plus = next_row_deterministic(addr_n_plus, map, pfn_va_len);
+    addr_tuple addr_f_minus = prev_row_deterministic(addr_n_minus, map, pfn_va_len);
     if (addr_f_plus.v_addr == NULL || addr_f_minus.v_addr == NULL)
+    {
+        return 0;
+    }
+    // Last check for quad pattern
+    int bank = get_bank(addr_f_plus.p_addr);
+    // Check that all addresses belong to same bank
+    if (get_bank(addr_n_plus.p_addr) != bank || get_bank(addr.p_addr) != bank || get_bank(addr_n_minus.p_addr) != bank || get_bank(addr_f_minus.p_addr) != bank)
+    {
+        return 0;
+    }
+    // Check that all addresses belong to same channel
+    int channel = get_channel(addr_f_plus.p_addr);
+    if (get_channel(addr_n_plus.p_addr) != channel || get_channel(addr.p_addr) != channel || get_channel(addr_n_minus.p_addr) != channel || get_channel(addr_f_minus.p_addr) != channel)
     {
         return 0;
     }
@@ -343,6 +366,17 @@ uint64_t pattern_quad(addr_tuple addr, uint64_t *buffer, size_t size, int iter, 
     {
         return 0;
     }
+}
+
+uint64_t pattern_double(addr_tuple addr, uint64_t *buffer, size_t size, int iter, bool timing, pfn_va_t *map, size_t pfn_va_len, int op_type, int cache_op, int add_dsb)
+{
+    addr_tuple addr_n_plus = next_row_deterministic(addr, map, pfn_va_len);
+    addr_tuple addr_n_minus = prev_row_deterministic(addr, map, pfn_va_len);
+    if (addr_n_plus.v_addr == NULL || addr_n_minus.v_addr == NULL)
+    {
+        return 0;
+    }
+    return hammer_double(addr_n_plus, addr_n_minus, iter, timing, op_type, cache_op, add_dsb);
 }
 
 /**
@@ -358,39 +392,46 @@ bitflip *detect_bitflips(uint64_t *buffer, size_t size, pattern_func pattern)
     bitflip *bitflips = (bitflip *)calloc(256, sizeof(bitflip));
     int bitflip_count = 0;
     size_t word_count = size / sizeof(uint64_t);
-    
+
     // Process in larger chunks to improve memory locality
     const size_t CHUNK_SIZE = 4096; // Process 4KB chunks at a time
     size_t chunks = (word_count + CHUNK_SIZE - 1) / CHUNK_SIZE;
-    
-    for (size_t chunk = 0; chunk < chunks && bitflip_count < 256; chunk++) {
+
+    for (size_t chunk = 0; chunk < chunks && bitflip_count < 256; chunk++)
+    {
         size_t start_idx = chunk * CHUNK_SIZE;
         size_t end_idx = (start_idx + CHUNK_SIZE) < word_count ? (start_idx + CHUNK_SIZE) : word_count;
-        
+
         // Pre-calculate all expected values for this chunk
         uint64_t expected_values[CHUNK_SIZE];
-        for (size_t i = start_idx; i < end_idx; i++) {
+        for (size_t i = start_idx; i < end_idx; i++)
+        {
             uint64_t addr = (uint64_t)(&buffer[i]);
             expected_values[i - start_idx] = pattern(addr);
         }
-        
+
         // Now check for bitflips with better cache locality
-        for (size_t i = start_idx; i < end_idx && bitflip_count < 256; i++) {
+        for (size_t i = start_idx; i < end_idx && bitflip_count < 256; i++)
+        {
             uint64_t byte = buffer[i];
             uint64_t expected = expected_values[i - start_idx];
-            
-            if (expected != byte) {
+
+            if (expected != byte)
+            {
                 uint64_t diff = expected ^ byte;
                 // Skip byte if there are no changes - optimization for sparse bitflips
-                if (diff == 0) continue;
-                
+                if (diff == 0)
+                    continue;
+
                 uint64_t addr = (uint64_t)(&buffer[i]);
-                
+
                 // Optimize bit position checking - use intrinsics if available
-                for (int j = 0; j < 64 && bitflip_count < 256; j++) {
-                    if (diff & (1ULL << j)) {
+                for (int j = 0; j < 64 && bitflip_count < 256; j++)
+                {
+                    if (diff & (1ULL << j))
+                    {
                         bitflips[bitflip_count].direction = (byte & (1ULL << j)) ? 1 : 0;
-                        bitflips[bitflip_count].addr.v_addr = (void*)addr;
+                        bitflips[bitflip_count].addr.v_addr = (void *)addr;
                         bitflips[bitflip_count].addr.p_addr = get_phys_addr(addr);
                         bitflips[bitflip_count].bit_pos = j;
                         bitflips[bitflip_count].expected = expected;
@@ -398,132 +439,13 @@ bitflip *detect_bitflips(uint64_t *buffer, size_t size, pattern_func pattern)
                         bitflip_count++;
                     }
                 }
-                
+
                 // Correct the bitflip in the buffer
                 buffer[i] = expected;
             }
         }
     }
-    
-    // Zero out the rest of the bitflips slots
-    for (int k = bitflip_count; k < 256; k++) {
-        bitflips[k].addr.v_addr = NULL;
-    }
-    
-    return bitflips;
-}
 
-/**
- * focused_detect_bitflips - Detects bitflips in a focused region of a buffer.
- * @buffer: The buffer to check for bitflips.
- * @size: The size of the buffer in bytes.
- * @pattern: The pattern function used to generate expected values.
- * @addr: The address tuple to focus on.
- * @map: The page frame number to virtual address mapping.
- * @pfn_va_len: The length of the mapping.
- *
- * Returns an array of detected bitflips, with a maximum of 256 entries.
- */
-bitflip *focused_detect_bitflips(uint64_t *buffer, size_t size, pattern_func pattern, addr_tuple addr, pfn_va_t *map, size_t pfn_va_len)
-{
-    bitflip *bitflips = (bitflip *)calloc(256, sizeof(bitflip));
-    int bitflip_count = 0;
-
-    /* initialise every struct to {NULL,0} */
-    addr_tuple addr_n_plus = {0}, addr_f_plus = {0}, addr_vf_plus = {0};
-    addr_tuple addr_n_minus = {0}, addr_f_minus = {0}, addr_vf_minus = {0};
-
-    /* first neighbours */
-    addr_n_plus = next_row(addr, map, pfn_va_len);
-    addr_n_minus = prev_row(addr, map, pfn_va_len);
-
-    /* second neighbours  (+2 / –2) */
-    if (addr_n_plus.v_addr)
-        addr_f_plus = next_row(addr_n_plus, map, pfn_va_len);
-    if (addr_n_minus.v_addr)
-        addr_f_minus = prev_row(addr_n_minus, map, pfn_va_len);
-
-    /* third neighbours  (+3 / –3) */
-    if (addr_f_plus.v_addr)
-        addr_vf_plus = next_row(addr_f_plus, map, pfn_va_len);
-    if (addr_f_minus.v_addr)
-        addr_vf_minus = prev_row(addr_f_minus, map, pfn_va_len);
-
-    // Get the smallest valid pointer
-    addr_tuple *candidates[] = {&addr_vf_minus, &addr_f_minus, &addr_n_minus, &addr};
-    uint64_t *smallest = NULL;
-
-    for (int i = 0; i < 4; i++)
-    {
-        if (candidates[i]->v_addr != NULL)
-        {
-            smallest = candidates[i]->v_addr;
-            break;
-        }
-    }
-
-    // Get the largest valid pointer
-    addr_tuple *candidates2[] = {&addr_vf_plus, &addr_f_plus, &addr_n_plus, &addr};
-    uint64_t *biggest = NULL;
-    for (int i = 0; i < 4; i++)
-    {
-        if (candidates2[i]->v_addr != NULL)
-        {
-            biggest = candidates2[i]->v_addr;
-            break;
-        }
-    }
-    printf("Smallest: %p, Biggest: %p\n", smallest, biggest);
-    if (smallest == NULL || biggest == NULL)
-    {
-        return NULL;
-    }
-
-    // Check the pointers on all words between the smallest and biggest
-    if (smallest < buffer)
-    {
-        smallest = buffer;
-    }
-    if (biggest > buffer + size)
-    {
-        biggest = buffer + size;
-    }
-    size_t word_count = biggest - smallest;
-    for (size_t i = 0; i <= word_count; i++)
-    {
-        uint64_t byte = smallest[i];
-        printf("Byte: %lx\n", byte);
-        uint64_t addr = (uint64_t)(&smallest[i]);
-        uint64_t expected = pattern(addr);
-        if (expected != byte)
-        {
-            if (bitflip_count >= 256)
-            {
-                break;
-            }
-
-            uint64_t diff = expected ^ byte;
-            for (int j = 0; j < 64; j++)
-            {
-                if (diff & (1 << j))
-                {
-                    if (bitflip_count >= 256)
-                    {
-                        break;
-                    }
-                    bitflips[bitflip_count].direction = (byte & (1 << j)) ? 1 : 0;
-                    bitflips[bitflip_count].addr.v_addr = addr;
-                    bitflips[bitflip_count].addr.p_addr = get_phys_addr(addr);
-                    bitflips[bitflip_count].bit_pos = j;
-                    bitflips[bitflip_count].expected = expected;
-                    bitflips[bitflip_count].actual = byte;
-                    bitflip_count++;
-                }
-            }
-            // Correct the bitflip in the buffer
-            smallest[i] = expected;
-        }
-    }
     // Zero out the rest of the bitflips slots
     for (int k = bitflip_count; k < 256; k++)
     {
@@ -587,7 +509,7 @@ static void progress_bar(size_t done, size_t total, size_t flips)
     double pct = (double)done / total;
     size_t mark = (size_t)(pct * bar_w);
 
-    printf("\r[%.*s%.*s] %5.1f %%   flips: %zu",
+    printf("\t\t\r[%.*s%.*s] %5.1f %%   flips: %zu",
            (int)mark, "##################################################",
            (int)(bar_w - mark), "                                                  ",
            pct * 100.0, flips);
@@ -658,7 +580,8 @@ void bitflip_test(size_t buffer_size, buffer_type b_type, pattern_func pattern, 
 
     if (uncachable)
     {
-        make_uncacheable_multi(buffer, buffer_size, b_type == HUGEPAGE_2MB ? MB(2) : KB(4));
+        make_uncacheable_multi(buffer, buffer_size);
+        printf("Buffer made uncachable\n");
     }
 
     size_t pmap_len = 0;
@@ -672,7 +595,7 @@ void bitflip_test(size_t buffer_size, buffer_type b_type, pattern_func pattern, 
     va_to_pa_test(buffer, buffer_size, pmap, pmap_len);
 
     printf("Testing hammering strategies...\n");
-    instructions_timing_test(gen_random_addr(buffer, buffer_size), 100000, buffer, buffer_size);
+    instructions_timing_test(gen_random_addr(buffer, buffer_size), 1000000, buffer, buffer_size);
     int total_flips = 0;
     int i = 0;
     int progress = 0;
@@ -702,7 +625,17 @@ void bitflip_test(size_t buffer_size, buffer_type b_type, pattern_func pattern, 
         case PATTERN_SINGLE_DECOY:
             iter_time = pattern_single_decoy(addr, buffer, buffer_size, hammer_iter, timing, op_type, cache_op, add_dsb) / 2;
             average_time = iter_time / hammer_iter;
+
             break;
+        case PATTERN_DOUBLE:
+            iter_time = pattern_double(addr, buffer, buffer_size, hammer_iter, timing, pmap, pmap_len, op_type, cache_op, add_dsb) / 2;
+            average_time = iter_time / hammer_iter;
+            break;
+        }
+        if (iter_time == 0)
+        {
+            i--;
+            continue;
         }
 
         // Measure time for detect_bitflips
@@ -724,7 +657,6 @@ void bitflip_test(size_t buffer_size, buffer_type b_type, pattern_func pattern, 
                 printf("Hammered address: %p\n", addr.v_addr);
                 if (file != NULL)
                 {
-                    // For single and decoy patterns
                     fprintf(file, "Iter: %d, Aggr_v: %p, Aggr_p: %lx, Virtual: %p, Physical: %lx, Expected: %x, Actual: %x, Bit_pos: %d\n",
                             i, addr.v_addr, addr.p_addr,
                             bitflips[j].addr.v_addr, bitflips[j].addr.p_addr,
@@ -744,19 +676,13 @@ void bitflip_test(size_t buffer_size, buffer_type b_type, pattern_func pattern, 
             int remaining_iter = iter - i - 1; // Adjust to account for current iteration
             double remaining_time = time_per_iter * remaining_iter;
             progress_bar(i + 1, iter, total_flips);
-            if (timing == 1)
-            {
-                // Calculate the average over all completed iterations
-                printf("\t Average time of access: %d ns", average_time);
-                printf("\t Detection time: %.2f ms", detect_time);
-            }
             printf("\t ETA : %dh %dmin %dsec", (int)(remaining_time / 3600), (int)((int)remaining_time % 3600) / 60, (int)remaining_time % 60);
+            printf("\t Iterations: %d/%d", i + 1, iter);
             progress = 0;
             timespec_get(&start, TIME_UTC);
         }
     }
 
-    // Close the file after all iterations
     if (file != NULL)
     {
         fclose(file);

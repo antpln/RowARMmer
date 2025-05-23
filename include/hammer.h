@@ -13,7 +13,8 @@ typedef enum {
 typedef enum  {
     PATTERN_SINGLE,
     PATTERN_SINGLE_DECOY,
-    PATTERN_QUAD
+    PATTERN_QUAD,
+    PATTERN_DOUBLE,
 } hammer_pattern;
 
 typedef struct {

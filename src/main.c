@@ -66,6 +66,7 @@ static hammer_pattern lookup_hammer(const char *name)
     if (!strcmp(name, "single"))        return PATTERN_SINGLE;
     if (!strcmp(name, "decoy"))         return PATTERN_SINGLE_DECOY;
     if (!strcmp(name, "quad"))          return PATTERN_QUAD;
+    if (!strcmp(name, "double"))        return PATTERN_DOUBLE;
     fprintf(stderr, "Unknown hammer pattern '%s' – falling back to quad.\n", name);
     return PATTERN_QUAD;
 }
@@ -86,14 +87,13 @@ static void usage(const char *prog)
     puts("  -s, --size <MB>         buffer size in megabytes (default 32)");
     puts("  -i, --iter <N>          random hammer placements (default 1000)");
     puts("  -n, --hammer <N>        activations per placement (default 1000000)");
-    puts("  -H, --hammer-pattern    single | decoy | quad  (default quad)");
+    puts("  -H, --hammer-pattern    single | decoy | quad | double (default quad)");
     puts("  -B, --buffer-type       normal | 2M | 1G       (default normal)");
     puts("  -P, --pattern           aa | 55 | parity | rand (default aa)");
     puts("  -S, --seed <hex/dec>    seed for rand pattern (default epoch time)");
-    puts("  -t, --timing            collect cycle counts");
     puts("  -v, --verbose           print flips to stdout as well");
     puts("  -u, --uncachable        make memory buffer uncachable");
-    puts("  -o, --op-type <N>       operation type (0 = read, 1 = write)");
+    puts("  -o, --op-type <N>       operation type (0 = read, 1 = write, 2 = ZVA)");
     puts("  -c, --cache-op <N>      cache operation (0 = none, 1 = CIVAC, 2 = CVAC)");
     puts("  -d, --add-dsb <N>       add DSB after cache operation (0 = no, 1 = yes)");
     puts("  -h, --help              this message\n");
@@ -128,7 +128,7 @@ int main(int argc, char *argv[])
     hammer_pattern hpat        = PATTERN_SINGLE;
     pattern_func  pattern      = pattern_const_aa;
     const char   *pattern_name = "aa";
-    bool          timing       = false;
+    bool          timing       = true;
     bool          verbose      = false;
     bool          seed_given   = false;
     bool          uncachable   = false;
@@ -146,7 +146,6 @@ int main(int argc, char *argv[])
         {"buffer-type",    required_argument, 0, 'B'},
         {"pattern",        required_argument, 0, 'P'},
         {"seed",           required_argument, 0, 'S'},
-        {"timing", no_argument,       0, 't'},
         {"verbose",no_argument,       0, 'v'},
         {"uncachable", no_argument,   0, 'u'},
         {"op-type", required_argument, 0, 'o'},
@@ -188,7 +187,7 @@ int main(int argc, char *argv[])
     printf("Starting test: size=%zu MB, iter=%d, hammer=%d, pattern=%s, seed=0x%llx, HP=%d, uncachable=%d, file=%s\n",
            size_mb, iter, hammer_iter, pattern_name, (unsigned long long)g_pattern_seed, btype, uncachable, out_name);
     printf("Choosen strategy: op=%s, cache_op=%s, add_dsb=%s\n",
-           op_type == 0 ? "LDR" : "STR",
+           op_type == 0 ? "LDR" : (op_type == 2 ? "ZVA" : "STR"),
            cache_op == 0 ? "none" : (cache_op == 1 ? "CIVAC" : "CVAC"),
            add_dsb ? "yes" : "no");
     /* ---- write header to file ---- */
@@ -205,7 +204,7 @@ int main(int argc, char *argv[])
         printf("Starting...");
     }
 
-    bitflip_test(buf_bytes, btype, pattern, hpat, timing, iter, hammer_iter, out_name, uncachable, op_type, cache_op, add_dsb);
+    bitflip_test(buf_bytes, btype, pattern, hpat, true, iter, hammer_iter, out_name, uncachable, op_type, cache_op, add_dsb);
 
     puts("Done.");
     return 0;
