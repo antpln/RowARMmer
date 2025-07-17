@@ -1,6 +1,6 @@
 # ARMv8 Rowhammer Test-Bed
 
-A Rowhammer-based DRAM mapping reverse-engineering framework inspired by:
+A Rowhammer Test-Bed for ARMv8 inspired by :
 
 > Kogler, A. (*n.d.*). *Half-Double: Hammering From the Next Row Over*.  
 
